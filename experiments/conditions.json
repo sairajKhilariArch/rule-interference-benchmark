@@ -1,0 +1,28 @@
+
+{
+  "experiment": "rule_order_sensitivity",
+  "model": "upstage/solar-mini4:free",
+  "temperature": 0,
+  "question": "Calculate the reportable revenue for the selected period.",
+  "conditions": {
+    "A_single_deleted_rule": [
+      "Exclude deleted customers."
+    ],
+    "A_single_verified_rule": [
+      "Include only verified customers."
+    ],
+    "A_single_refund_rule": [
+      "Subtract refunds from revenue."
+    ],
+    "B_combined_rules": [
+      "Exclude deleted customers.",
+      "Include only verified customers.",
+      "Subtract refunds from revenue."
+    ],
+    "C_reordered_rules": [
+      "Subtract refunds from revenue.",
+      "Include only verified customers.",
+      "Exclude deleted customers."
+    ]
+  }
+}

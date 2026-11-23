@@ -58,3 +58,21 @@ Thumbs.db
 .venv/
 pycache/
 *.pyc
+
+
+# All local experiment outputs
+/results/
+
+# Local research database
+/database/*.db
+/database/*.sqlite
+/database/*.sqlite3
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local backups
+*.backup
+*.bak

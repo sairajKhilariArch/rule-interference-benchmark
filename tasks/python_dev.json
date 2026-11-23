@@ -1,0 +1,10 @@
+{
+  "name": "discount_function_dev",
+  "question": "Write a Python function discount_total(price, discount_percent, is_member) returning the final price. Apply the percentage discount only for members. Raise ValueError for negative price or discount_percent outside 0 to 100. Round to 2 decimal places.",
+  "rules": [
+    "Non-members receive no discount.",
+    "Members receive the given percentage discount.",
+    "Reject invalid numeric inputs with ValueError.",
+    "Round the final result to 2 decimal places."
+  ]
+}

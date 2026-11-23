@@ -1,0 +1,12 @@
+{
+  "name": "retail_net_revenue_dev",
+  "schema": "CREATE TABLE customers(customer_id, verified, deleted); CREATE TABLE orders(order_id, customer_id, order_date); CREATE TABLE order_items(item_id, order_id, quantity, unit_price); CREATE TABLE refunds(refund_id, order_id, refund_amount);",
+  "question": "Write one SQLite SELECT query returning net revenue for verified, non-deleted customers for dates from 2026-01-01 inclusive to 2026-02-01 exclusive. Sum quantity times unit_price and subtract refunds. Return one column named net_revenue.",
+  "rules": [
+    "Only verified customers (verified = 1) are eligible.",
+    "Exclude deleted customers (deleted = 1).",
+    "Revenue is item quantity multiplied by unit price, minus refunds.",
+    "Use the date interval [2026-01-01, 2026-02-01).",
+    "Do not multiply refund amounts when an order has multiple item rows."
+  ]
+}
