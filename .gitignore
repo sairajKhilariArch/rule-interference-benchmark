@@ -1,28 +1,33 @@
+/Private evaluation datasets
 
-# Private evaluation datasets
 private_data/
 hidden_tests/
 gold_sql/
 expected_results/
 private_results/
 
-# Experimental runs and internal results
+/Experimental runs and internal results
+
 experiments/runs/
 experiments/private/
 results/raw/
 results/internal/
+runs/*
 
-# Local databases
+Local databases
+
 *.db
 *.sqlite
 *.sqlite3
 
-# AI model downloads and caches
+/AI model downloads and caches
+
 models/
 model_cache/
 huggingface_cache/
 
-# API keys and credentials
+/API keys and credentials
+
 .env
 .env.*
 !.env.example
@@ -31,16 +36,25 @@ credentials/
 *.pem
 *.key
 
-# Logs and temporary experiment files
+/Logs and temporary experiment files
+
 logs/
 *.log
 *.tmp
 *.bak
 
-# Local IDE settings
+/Local IDE settings
+
 .idea/
 .vscode/
 
-# OS files
+OS files
+
 .DS_Store
 Thumbs.db
+
+/Python environment and cache
+
+.venv/
+pycache/
+*.pyc
