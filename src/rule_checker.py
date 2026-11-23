@@ -20,6 +20,10 @@ SQL_PATH = (
 LOG_PATH = ROOT / "results" / "rule_test_log.jsonl"
 
 
+class ResultContractError(Exception):
+    pass
+
+
 def run_query(db_path, sql):
     connection = sqlite3.connect(
         db_path.as_uri() + "?mode=ro",
@@ -32,15 +36,15 @@ def run_query(db_path, sql):
         rows = cursor.fetchall()
 
         if len(rows) != 1 or len(rows[0]) != 1:
-            raise ValueError("Expected one row and one column.")
+            raise ResultContractError("Expected one row and one column.")
 
         value = rows[0][0]
 
         if not isinstance(value, (int, float)):
-            raise ValueError("Expected a numeric result.")
+            raise ResultContractError("Expected a numeric result.")
 
         if not math.isfinite(value):
-            raise ValueError("Result must be finite.")
+            raise ResultContractError("Result must be finite.")
 
         return float(value)
 
@@ -175,6 +179,7 @@ def add_multiple_payments_and_refunds(db_path):
         connection.close()
 
 
+
 def evaluate_rules(sql, condition_name):
 
     condition_tests = {
@@ -185,7 +190,9 @@ def evaluate_rules(sql, condition_name):
             "verified_customer_rule"
         ],
         "A_single_refund_rule": [
-            "refund_rule",
+            "refund_rule"
+        ],
+        "A_single_join_rule": [
             "join_multiplication_rule"
         ],
         "B_combined_rules": [
@@ -206,7 +213,6 @@ def evaluate_rules(sql, condition_name):
         raise ValueError("Unknown experimental condition.")
 
     selected_tests = condition_tests[condition_name]
-
     baseline = run_query(DB_PATH, sql)
     results = {}
 
@@ -288,11 +294,21 @@ def main():
         )
 
         record["condition"] = condition_name
+        record["run_id"] = (
+            sys.argv[3] if len(sys.argv) > 3 else None
+        )
+        record["trial_number"] = (
+            int(sys.argv[4]) if len(sys.argv) > 4 else None
+        )
         record["tests"] = evaluate_rules(sql, condition_name)
         record["status"] = "completed"
 
     except sqlite3.Error as error:
         record["status"] = "sql_execution_failure"
+        record["error"] = str(error)
+
+    except ResultContractError as error:
+        record["status"] = "result_contract_failure"
         record["error"] = str(error)
 
     except Exception as error:
