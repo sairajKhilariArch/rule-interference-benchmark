@@ -1,6 +1,7 @@
 
 import json
 import hashlib
+import random
 import subprocess
 import sys
 
@@ -14,56 +15,42 @@ RESULTS = ROOT / "results" / "experiments"
 
 client = OpenAI(
     base_url="http://127.0.0.1:8645/v1",
-    api_key="test"
+    api_key="test",
+    timeout=120
 )
 
 SCHEMA = """
-Database tables and columns:
-
 customers(
-    customer_id INTEGER,
-    name TEXT,
-    is_verified INTEGER,
-    is_deleted INTEGER
+    customer_id, name, is_verified, is_deleted
 )
 
 orders(
-    order_id INTEGER,
-    customer_id INTEGER,
-    order_date TEXT,
-    status TEXT
+    order_id, customer_id, order_date, status
 )
 
 order_items(
-    item_id INTEGER,
-    order_id INTEGER,
-    product_name TEXT,
-    quantity INTEGER,
-    unit_price REAL
+    item_id, order_id, product_name, quantity, unit_price
 )
 
 payments(
-    payment_id INTEGER,
-    order_id INTEGER,
-    amount REAL
+    payment_id, order_id, amount
 )
 
 refunds(
-    refund_id INTEGER,
-    order_id INTEGER,
-    amount REAL
+    refund_id, order_id, amount
 )
 
-IMPORTANT:
-- orders.amount DOES NOT EXIST.
-- Revenue amounts come from payments.amount.
-- Refund amounts come from refunds.amount.
-- Join tables using their order_id columns.
+Important:
+- orders.amount does not exist.
+- Revenue uses payments.amount.
+- Refunds use refunds.amount.
+- Join using order_id and customer_id.
 - Never invent columns.
 """
 
 
 def generate_sql(model, temperature, question, rules):
+
     prompt = f"""
 You are an SQLite SQL generator.
 
@@ -77,6 +64,16 @@ Question:
 {question}
 
 Return exactly one SQLite SELECT query.
+
+OUTPUT REQUIREMENTS:
+- Return exactly one row.
+- Return exactly one column.
+- The column must contain one numeric total.
+- Do not use GROUP BY.
+- Do not return customer or order details.
+- Do not return text or explanations.
+- Never reference columns that do not exist.
+
 Do not explain.
 Do not use Markdown.
 """
@@ -98,8 +95,6 @@ Do not use Markdown.
 
 
 def main():
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError("Experiment configuration not found.")
 
     config = json.loads(
         CONFIG_PATH.read_text(encoding="utf-8")
@@ -110,92 +105,135 @@ def main():
     question = config["question"]
     conditions = config["conditions"]
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    trials = int(config.get("trials_per_condition", 5))
+    seed = int(config.get("random_seed", 20261124))
+
+    if trials < 1:
+        raise ValueError("Trials must be at least 1.")
+
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
     run_directory = RESULTS / run_id
-    run_directory.mkdir(parents=True, exist_ok=True)
+    run_directory.mkdir(parents=True, exist_ok=False)
+
+    rng = random.Random(seed)
 
     metadata = {
         "run_id": run_id,
         "model": model,
         "temperature": temperature,
         "question": question,
-        "conditions": {}
+        "trials_per_condition": trials,
+        "random_seed": seed,
+        "condition_count": len(conditions),
+        "planned_generations": trials * len(conditions),
+        "trials": []
     }
 
-    successful = 0
-    failed = 0
+    total_success = 0
+    total_failure = 0
 
-    for condition_name, rules in conditions.items():
+    for trial_number in range(1, trials + 1):
 
-        print(f"\nGenerating condition: {condition_name}")
+        condition_order = list(conditions.keys())
+        rng.shuffle(condition_order)
 
-        try:
-            sql, prompt = generate_sql(
-                model,
-                temperature,
-                question,
-                rules
+        trial_record = {
+            "trial_number": trial_number,
+            "condition_order": condition_order,
+            "conditions": {}
+        }
+
+        print(f"\n========== TRIAL {trial_number}/{trials} ==========")
+
+        for condition_name in condition_order:
+
+            rules = conditions[condition_name]
+
+            print(f"\nCondition: {condition_name}")
+
+            condition_record = {}
+
+            sql_path = run_directory / (
+                f"trial_{trial_number:02d}_{condition_name}.sql"
             )
 
-            sql_path = run_directory / f"{condition_name}.sql"
+            try:
 
-            sql_path.write_text(
-                sql,
-                encoding="utf-8"
-            )
+                sql, prompt = generate_sql(
+                    model,
+                    temperature,
+                    question,
+                    rules
+                )
 
-            metadata["conditions"][condition_name] = {
-                "status": "generated",
-                "sql_file": sql_path.name,
-                "prompt_sha256": hashlib.sha256(
+                sql_path.write_text(sql, encoding="utf-8")
+
+                condition_record["generation"] = "completed"
+                condition_record["sql_file"] = sql_path.name
+                condition_record["prompt_sha256"] = hashlib.sha256(
                     prompt.encode("utf-8")
                 ).hexdigest()
-            }
 
-            print("SQL saved locally.")
+                print("SQL generated and saved locally.")
 
-            # Evaluate this specific generated query.
+            except Exception as error:
+
+                condition_record["generation"] = "failed"
+                condition_record["error_type"] = type(error).__name__
+
+                condition_record["evaluation"] = "not_run"
+
+                total_failure += 1
+                trial_record["conditions"][condition_name] = condition_record
+                print("Generation failed:", type(error).__name__)
+
+                continue
+
             evaluation = subprocess.run(
                 [
                     sys.executable,
                     str(ROOT / "src" / "rule_checker.py"),
                     str(sql_path),
-                    condition_name
+                    condition_name,
+                    run_id,
+                    str(trial_number)
                 ],
                 cwd=ROOT
             )
 
             if evaluation.returncode == 0:
-                metadata["conditions"][condition_name]["evaluation"] = "completed"
-                successful += 1
+                condition_record["evaluation"] = "completed"
+                total_success += 1
+                print("Evaluation completed.")
             else:
-                metadata["conditions"][condition_name]["evaluation"] = "failed"
-                failed += 1
+                condition_record["evaluation"] = "failed"
+                total_failure += 1
+                print("Evaluation failed. See local evaluator log.")
 
-        except Exception as error:
-            metadata["conditions"][condition_name] = {
-                "status": "generation_failed",
-                "error_type": type(error).__name__
-            }
+            trial_record["conditions"][condition_name] = condition_record
 
-            failed += 1
-            print("Condition failed:", type(error).__name__)
+        metadata["trials"].append(trial_record)
 
-    metadata["successful_evaluations"] = successful
-    metadata["failed_conditions"] = failed
+        (run_directory / "metadata.json").write_text(
+            json.dumps(metadata, indent=4),
+            encoding="utf-8"
+        )
 
-    metadata_path = run_directory / "metadata.json"
+    metadata["successful_evaluations"] = total_success
+    metadata["failed_conditions"] = total_failure
 
-    metadata_path.write_text(
+    (run_directory / "metadata.json").write_text(
         json.dumps(metadata, indent=4),
         encoding="utf-8"
     )
 
-    print("\nExperiment run finished.")
+    print("\n========== EXPERIMENT FINISHED ==========")
     print("Run ID:", run_id)
-    print("Evaluation records saved locally.")
-    print("Metadata saved locally.")
+    print("Planned generations:", trials * len(conditions))
+    print("Successful evaluations:", total_success)
+    print("Failed conditions:", total_failure)
+    print("Results saved locally:", run_directory)
 
 
 if __name__ == "__main__":

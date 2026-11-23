@@ -179,6 +179,118 @@ def add_multiple_payments_and_refunds(db_path):
         connection.close()
 
 
+def calculate_reference_total(db_path, condition_name):
+    """
+    Calculate expected revenue independently using Python.
+
+    The reference calculation uses only the rules assigned
+    to the selected experimental condition.
+    """
+
+    valid_conditions = {
+        "A_single_deleted_rule",
+        "A_single_verified_rule",
+        "A_single_refund_rule",
+        "A_single_join_rule",
+        "B_combined_rules",
+        "C_reordered_rules"
+    }
+
+    if condition_name not in valid_conditions:
+        raise ValueError("Unknown experimental condition.")
+
+    exclude_deleted = condition_name in {
+        "A_single_deleted_rule",
+        "B_combined_rules",
+        "C_reordered_rules"
+    }
+
+    require_verified = condition_name in {
+        "A_single_verified_rule",
+        "B_combined_rules",
+        "C_reordered_rules"
+    }
+
+    subtract_refunds = condition_name in {
+        "A_single_refund_rule",
+        "A_single_join_rule",
+        "B_combined_rules",
+        "C_reordered_rules"
+    }
+
+    connection = sqlite3.connect(db_path)
+
+    try:
+        orders = connection.execute("""
+            SELECT
+                o.order_id,
+                c.is_verified,
+                c.is_deleted
+            FROM orders o
+            JOIN customers c
+                ON c.customer_id = o.customer_id
+        """).fetchall()
+
+        payments = {}
+        for order_id, amount in connection.execute("""
+            SELECT order_id, amount FROM payments
+        """):
+            payments[order_id] = (
+                payments.get(order_id, 0) + amount
+            )
+
+        refunds = {}
+        for order_id, amount in connection.execute("""
+            SELECT order_id, amount FROM refunds
+        """):
+            refunds[order_id] = (
+                refunds.get(order_id, 0) + amount
+            )
+
+        total = 0.0
+
+        for order_id, is_verified, is_deleted in orders:
+            if exclude_deleted and is_deleted != 0:
+                continue
+
+            if require_verified and is_verified != 1:
+                continue
+
+            total += payments.get(order_id, 0)
+
+            if subtract_refunds:
+                total -= refunds.get(order_id, 0)
+
+        return float(total)
+
+    finally:
+        connection.close()
+
+
+def evaluate_baseline(sql, condition_name):
+    """
+    Compare generated SQL's original answer against
+    the independent Python reference calculation.
+    """
+
+    actual = run_query(DB_PATH, sql)
+
+    expected = calculate_reference_total(
+        DB_PATH,
+        condition_name
+    )
+
+    return {
+        "expected": expected,
+        "actual": actual,
+        "correct": math.isclose(
+            actual,
+            expected,
+            rel_tol=1e-9,
+            abs_tol=1e-6
+        )
+    }
+
 
 def evaluate_rules(sql, condition_name):
 
@@ -268,6 +380,7 @@ def main():
         "timestamp": datetime.now().isoformat(),
         "status": "pending",
         "tests": {},
+        "baseline": None,
         "error": None,
         "sql_file": str(SQL_PATH)
     }
@@ -294,13 +407,27 @@ def main():
         )
 
         record["condition"] = condition_name
+
         record["run_id"] = (
             sys.argv[3] if len(sys.argv) > 3 else None
         )
+
         record["trial_number"] = (
             int(sys.argv[4]) if len(sys.argv) > 4 else None
         )
-        record["tests"] = evaluate_rules(sql, condition_name)
+
+        # Independent baseline correctness check
+        record["baseline"] = evaluate_baseline(
+            sql,
+            condition_name
+        )
+
+        # Individual business-rule checks
+        record["tests"] = evaluate_rules(
+            sql,
+            condition_name
+        )
+
         record["status"] = "completed"
 
     except sqlite3.Error as error:
@@ -324,11 +451,13 @@ def main():
     print("Status:", record["status"])
 
     if record["status"] == "completed":
+        print("Baseline correct:", record["baseline"]["correct"])
         print("Rule tests:", len(record["tests"]))
         print("Evaluation saved locally.")
     else:
         print("Evaluation error recorded locally.")
         raise SystemExit(1)
+
 
 
 if __name__ == "__main__":

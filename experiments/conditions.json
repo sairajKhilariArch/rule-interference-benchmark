@@ -1,9 +1,10 @@
-
 {
   "experiment": "rule_order_sensitivity",
+  "trials_per_condition": 5,
+  "random_seed": 20261124,
   "model": "upstage/solar-mini4:free",
   "temperature": 0,
-  "question": "Calculate the reportable revenue for the selected period.",
+  "question": "Calculate the total reportable revenue across all orders in the database.",
   "conditions": {
     "A_single_deleted_rule": [
       "Exclude deleted customers."
@@ -14,13 +15,18 @@
     "A_single_refund_rule": [
       "Subtract refunds from revenue."
     ],
+    "A_single_join_rule": [
+      "Aggregate payments and refunds per order before joining; do not multiply amounts across one-to-many joins."
+    ],
     "B_combined_rules": [
       "Exclude deleted customers.",
       "Include only verified customers.",
-      "Subtract refunds from revenue."
+      "Subtract refunds from revenue.",
+      "Aggregate payments and refunds per order before joining; do not multiply amounts across one-to-many joins."
     ],
     "C_reordered_rules": [
       "Subtract refunds from revenue.",
+      "Aggregate payments and refunds per order before joining; do not multiply amounts across one-to-many joins.",
       "Include only verified customers.",
       "Exclude deleted customers."
     ]

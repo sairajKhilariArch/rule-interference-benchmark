@@ -374,3 +374,88 @@ def test_unknown_condition_is_evaluator_failure(
 
     assert record["status"] == "evaluation_failure"
     assert exit_code == 1
+
+
+def independent_reference_total(db_path):
+    """
+    Independent Python calculation for the combined B/C condition.
+    Does not reuse the generated SQL.
+    """
+    connection = sqlite3.connect(db_path)
+
+    try:
+        eligible_customers = {
+            row[0]
+            for row in connection.execute("""
+                SELECT customer_id
+                FROM customers
+                WHERE is_verified = 1
+                  AND is_deleted = 0
+            """)
+        }
+
+        orders = connection.execute("""
+            SELECT order_id, customer_id
+            FROM orders
+        """).fetchall()
+
+        payments = {}
+        for order_id, amount in connection.execute("""
+            SELECT order_id, amount FROM payments
+        """):
+            payments[order_id] = payments.get(order_id, 0) + amount
+
+        refunds = {}
+        for order_id, amount in connection.execute("""
+            SELECT order_id, amount FROM refunds
+        """):
+            refunds[order_id] = refunds.get(order_id, 0) + amount
+
+        total = 0
+
+        for order_id, customer_id in orders:
+            if customer_id in eligible_customers:
+                total += payments.get(order_id, 0)
+                total -= refunds.get(order_id, 0)
+
+        return float(total)
+
+    finally:
+        connection.close()
+
+
+def test_correct_query_matches_independent_reference(synthetic_database):
+    actual = rule_checker.run_query(
+        synthetic_database,
+        CORRECT_SQL
+    )
+
+    expected = independent_reference_total(synthetic_database)
+
+    assert actual == expected
+
+
+def test_metamorphic_checks_can_miss_constant_offset(synthetic_database):
+    # This query is deliberately wrong: it adds 123 to the correct result.
+    offset_sql = f"""
+        SELECT ({CORRECT_SQL.strip().rstrip(';')}) + 123
+    """
+
+    # Existing metamorphic checks only observe changes.
+    results = rule_checker.evaluate_rules(
+        offset_sql,
+        "B_combined_rules"
+    )
+
+    # The current evaluator may accept every individual change test.
+    assert all(value is True for value in results.values())
+
+    # But its original answer is wrong.
+    actual = rule_checker.run_query(
+        synthetic_database,
+        offset_sql
+    )
+
+    expected = independent_reference_total(synthetic_database)
+
+    assert actual != expected
