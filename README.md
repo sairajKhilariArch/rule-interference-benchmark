@@ -20,7 +20,9 @@ The benchmark evaluates:
 
 The benchmark uses the following business question:
 
-> Calculate the total reportable revenue across all orders in the database.
+> Calculate the total reportable net revenue across all orders in the database.
+
+**Common revenue definition:** net revenue is the sum of all `payments.amount` values minus the sum of all `refunds.amount` values. This definition applies to every experimental condition. Refund subtraction is therefore an evaluation invariant, not an experimental factor.
 
 ## Experimental Design
 
@@ -30,20 +32,21 @@ The experiment uses a full-factorial design.
 | ------------------------- | ------------------------- |
 | Dataset sizes             | 100, 1,000, 10,000 orders |
 | Schema profiles           | Baseline, Expanded        |
-| Conditions                | 6                         |
+| Conditions                | 5                         |
 | Trials per condition      | 10                        |
-| Total planned generations | 360                       |
+| Total planned generations | 300                       |
 
 ### Business-rule conditions
 
-| Condition              | Description                                                        |
-| ---------------------- | ------------------------------------------------------------------ |
-| A_single_deleted_rule  | Exclude orders belonging to deleted customers                      |
-| A_single_verified_rule | Include orders only from verified customers                        |
-| A_single_refund_rule   | Subtract refunds from revenue                                      |
-| A_single_join_rule     | Aggregate payments and refunds separately per order before joining |
-| B_combined_rules       | Apply all four rules in canonical order                            |
-| C_reordered_rules      | Apply the same four rules in reversed order                        |
+| Condition              | Experimental constraints |
+| ---------------------- | ------------------------ |
+| A_single_deleted_rule  | Exclude orders belonging to deleted customers |
+| A_single_verified_rule | Include orders only from verified customers |
+| A_single_join_rule     | Aggregate payments and refunds separately per order before joining to avoid join fan-out |
+| B_combined_rules       | Apply all three experimental constraints in canonical order |
+| C_reordered_rules      | Apply the same three experimental constraints in a different order |
+
+Net revenue (payments minus refunds) is common to all five conditions and is not counted as an experimental constraint. The combined and reordered conditions contain exactly the same constraints; only their order differs.
 
 ### Schema profiles
 
