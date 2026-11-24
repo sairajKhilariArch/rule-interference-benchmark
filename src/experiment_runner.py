@@ -142,7 +142,7 @@ Question:
 
 Common revenue definition (applies to every condition):
 - Net revenue = SUM(payments.amount) - SUM(refunds.amount).
-- Calculate net revenue across all orders in the database.
+- Apply this calculation to the orders included by the experimental business rules.
 
 Important:
 - Do not assume customer eligibility filters unless they are listed in the experimental business rules.
