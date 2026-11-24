@@ -185,7 +185,7 @@ def test_verified_customer_violation_is_detected(synthetic_database):
 def test_refund_violation_is_detected(synthetic_database):
     results = rule_checker.evaluate_rules(
         BAD_REFUND_SQL,
-        "A_single_refund_rule"
+        "A_single_deleted_rule"
     )
 
     assert set(results) == {"refund_rule"}
@@ -604,7 +604,7 @@ def test_expanded_schema_detects_refund_violation(
 ):
     results = rule_checker.evaluate_rules(
         BAD_REFUND_SQL,
-        "A_single_refund_rule",
+        "A_single_deleted_rule",
         expanded_database
     )
 
