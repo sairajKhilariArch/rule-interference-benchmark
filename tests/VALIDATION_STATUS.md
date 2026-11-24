@@ -7,7 +7,7 @@
 - Reordered business-rule detection
 - Deleted-customer rule
 - Verified-customer rule
-- Refund rule
+- Common net-revenue invariant (payments minus refunds) in every condition
 - One-to-many join multiplication
 - Scalar result contract
 - Read-only SQL execution
