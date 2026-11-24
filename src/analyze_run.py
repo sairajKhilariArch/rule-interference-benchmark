@@ -292,7 +292,6 @@ def main():
         conditions = [
             "A_single_deleted_rule",
             "A_single_verified_rule",
-            "A_single_refund_rule",
             "A_single_join_rule",
             "B_combined_rules",
             "C_reordered_rules"

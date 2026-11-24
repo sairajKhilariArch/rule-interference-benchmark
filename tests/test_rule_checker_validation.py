@@ -138,7 +138,7 @@ def synthetic_database(tmp_path, monkeypatch):
     return db_path
 
 
-def test_correct_query_passes_all_four_rules(synthetic_database):
+def test_correct_query_passes_combined_constraints_and_net_revenue(synthetic_database):
     results = rule_checker.evaluate_rules(
         CORRECT_SQL,
         "B_combined_rules"
@@ -154,7 +154,7 @@ def test_correct_query_passes_all_four_rules(synthetic_database):
     assert all(value is True for value in results.values())
 
 
-def test_correct_query_passes_reordered_condition(synthetic_database):
+def test_correct_query_passes_reordered_constraints_and_net_revenue(synthetic_database):
     results = rule_checker.evaluate_rules(
         CORRECT_SQL,
         "C_reordered_rules"
@@ -185,10 +185,10 @@ def test_verified_customer_violation_is_detected(synthetic_database):
 def test_refund_violation_is_detected(synthetic_database):
     results = rule_checker.evaluate_rules(
         BAD_REFUND_SQL,
-        "A_single_refund_rule"
+        "A_single_deleted_rule"
     )
 
-    assert set(results) == {"refund_rule"}
+    assert "refund_rule" in results
     assert results["refund_rule"] is False
 
 
@@ -198,7 +198,7 @@ def test_join_multiplication_violation_is_detected(synthetic_database):
         "A_single_join_rule"
     )
 
-    assert set(results) == {"join_multiplication_rule"}
+    assert set(results) == {"refund_rule", "join_multiplication_rule"}
     assert results["join_multiplication_rule"] is False
 
 
@@ -604,7 +604,7 @@ def test_expanded_schema_detects_refund_violation(
 ):
     results = rule_checker.evaluate_rules(
         BAD_REFUND_SQL,
-        "A_single_refund_rule",
+        "A_single_deleted_rule",
         expanded_database
     )
 

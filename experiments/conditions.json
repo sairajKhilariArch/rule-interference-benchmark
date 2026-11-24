@@ -1,24 +1,18 @@
-
 {
   "model": "upstage/solar-mini4:free",
   "temperature": 0,
   "random_seed": 20261124,
-
   "trials_per_condition": 10,
-
   "dataset_sizes": [
     100,
     1000,
     10000
   ],
-
   "schema_profiles": [
     "baseline",
     "expanded"
   ],
-
-  "question": "Calculate the total reportable revenue across all orders in the database.",
-
+  "question": "Calculate the total reportable net revenue for orders included by the supplied experimental business rules.",
   "conditions": [
     {
       "name": "A_single_deleted_rule",
@@ -33,12 +27,6 @@
       ]
     },
     {
-      "name": "A_single_refund_rule",
-      "rules": [
-        "Subtract refunds from revenue."
-      ]
-    },
-    {
       "name": "A_single_join_rule",
       "rules": [
         "Aggregate payments and refunds separately per order before joining them to avoid join fan-out."
@@ -49,7 +37,6 @@
       "rules": [
         "Exclude orders belonging to deleted customers.",
         "Include orders only from verified customers.",
-        "Subtract refunds from revenue.",
         "Aggregate payments and refunds separately per order before joining them to avoid join fan-out."
       ]
     },
@@ -57,7 +44,6 @@
       "name": "C_reordered_rules",
       "rules": [
         "Aggregate payments and refunds separately per order before joining them to avoid join fan-out.",
-        "Subtract refunds from revenue.",
         "Include orders only from verified customers.",
         "Exclude orders belonging to deleted customers."
       ]

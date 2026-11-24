@@ -371,7 +371,6 @@ def calculate_reference_total(db_path, condition_name):
     valid_conditions = {
         "A_single_deleted_rule",
         "A_single_verified_rule",
-        "A_single_refund_rule",
         "A_single_join_rule",
         "B_combined_rules",
         "C_reordered_rules"
@@ -392,12 +391,8 @@ def calculate_reference_total(db_path, condition_name):
         "C_reordered_rules"
     }
 
-    subtract_refunds = condition_name in {
-        "A_single_refund_rule",
-        "A_single_join_rule",
-        "B_combined_rules",
-        "C_reordered_rules"
-    }
+    # Net revenue is the common metric in every condition.
+    subtract_refunds = True
 
     connection = sqlite3.connect(db_path)
 
@@ -482,29 +477,31 @@ def evaluate_rules(sql, condition_name, db_path=None):
 
     selected_db = resolve_db_path(db_path)
 
+    # Refund subtraction is a common invariant, not an experimental factor.
+    # Each condition is tested for net-revenue behavior plus its assigned rules.
     condition_tests = {
         "A_single_deleted_rule": [
+            "refund_rule",
             "deleted_customer_rule"
         ],
         "A_single_verified_rule": [
+            "refund_rule",
             "verified_customer_rule"
         ],
-        "A_single_refund_rule": [
-            "refund_rule"
-        ],
         "A_single_join_rule": [
+            "refund_rule",
             "join_multiplication_rule"
         ],
         "B_combined_rules": [
+            "refund_rule",
             "deleted_customer_rule",
             "verified_customer_rule",
-            "refund_rule",
             "join_multiplication_rule"
         ],
         "C_reordered_rules": [
+            "refund_rule",
             "deleted_customer_rule",
             "verified_customer_rule",
-            "refund_rule",
             "join_multiplication_rule"
         ]
     }
