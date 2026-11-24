@@ -140,13 +140,16 @@ Business rules:
 Question:
 {question}
 
+Common revenue definition (applies to every condition):
+- Net revenue = SUM(payments.amount) - SUM(refunds.amount).
+- Calculate net revenue across all orders in the database.
+
 Important:
-- Revenue is calculated using payments.amount.
-- Refunds are subtracted using refunds.amount.
-- Join tables using their declared foreign-key relationships.
+- Do not assume customer eligibility filters unless they are listed in the experimental business rules.
+- Join tables using their declared relationships.
 - Do not invent columns or tables.
 - Do not calculate revenue using order_items.unit_price.
-- Apply every supplied business rule.
+- Apply every supplied experimental business rule.
 
 Return exactly one SQLite SELECT query.
 
