@@ -256,3 +256,45 @@ def test_refund_mutation_does_not_change_original_database(tmp_path):
         }
 
     assert after == before
+
+
+
+def test_refund_mutation_is_independent_of_existing_join_fanout(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "refund_with_existing_fanout.db"
+    make_database(db_path)
+
+    # Make the first eligible order multi-payment and multi-refund. The
+    # previous mutation selected this arbitrary order, coupling the refund
+    # result to payment/refund join fan-out.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO payments VALUES (4, 101, 50)"
+        )
+        connection.execute(
+            "INSERT INTO refunds VALUES (2, 101, 5)"
+        )
+
+    naive_join_sql = """
+        SELECT COALESCE(SUM(p.amount), 0)
+             - COALESCE(SUM(r.amount), 0)
+        FROM orders AS o
+        JOIN customers AS c
+          ON c.customer_id = o.customer_id
+        LEFT JOIN payments AS p
+          ON p.order_id = o.order_id
+        LEFT JOIN refunds AS r
+          ON r.order_id = o.order_id
+    """
+
+    results = rule_checker.evaluate_rules(
+        naive_join_sql,
+        "A_single_join_rule",
+        db_path,
+    )
+
+    # The refund check is now isolated and should pass even though this SQL
+    # still fails the separate multi-payment/multi-refund fan-out test.
+    assert results["refund_rule"] is True
+    assert results["join_multiplication_rule"] is False
