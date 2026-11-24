@@ -12,7 +12,7 @@
     "baseline",
     "expanded"
   ],
-  "question": "Calculate the total reportable net revenue across all orders in the database.",
+  "question": "Calculate the total reportable net revenue for orders included by the supplied experimental business rules.",
   "conditions": [
     {
       "name": "A_single_deleted_rule",
