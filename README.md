@@ -22,7 +22,7 @@ The benchmark uses the following business question:
 
 > Calculate the total reportable net revenue for orders included by the supplied experimental business rules.
 
-**Common revenue definition:** net revenue is the sum of all `payments.amount` values minus the sum of all `refunds.amount` values. This definition applies to every experimental condition. Refund subtraction is therefore an evaluation invariant, not an experimental factor.
+**Common revenue definition:** for the orders included under a condition, net revenue is the sum of their `payments.amount` values minus the sum of their `refunds.amount` values. This definition applies to every experimental condition. Refund subtraction is therefore an evaluation invariant, not an experimental factor.
 
 ## Experimental Design
 
