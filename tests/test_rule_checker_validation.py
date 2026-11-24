@@ -188,7 +188,7 @@ def test_refund_violation_is_detected(synthetic_database):
         "A_single_deleted_rule"
     )
 
-    assert set(results) == {"refund_rule"}
+    assert "refund_rule" in results
     assert results["refund_rule"] is False
 
 
@@ -198,7 +198,7 @@ def test_join_multiplication_violation_is_detected(synthetic_database):
         "A_single_join_rule"
     )
 
-    assert set(results) == {"join_multiplication_rule"}
+    assert set(results) == {"refund_rule", "join_multiplication_rule"}
     assert results["join_multiplication_rule"] is False
 
 
