@@ -181,31 +181,24 @@ def add_customer_order(db_path, verified, deleted):
     finally:
         connection.close()
 
+    return order_id
 
-def add_refund(db_path):
-    """Add a refund to an eligible customer order."""
+
+def add_refund(db_path, order_id):
+    """Add a refund to the explicitly selected test order."""
 
     connection = sqlite3.connect(db_path)
 
     try:
         connection.execute("PRAGMA foreign_keys = ON")
 
-        order = connection.execute(
-            """
-            SELECT o.order_id
-            FROM orders o
-            JOIN customers c
-                ON c.customer_id = o.customer_id
-            WHERE c.is_verified = 1
-              AND c.is_deleted = 0
-            LIMIT 1
-            """
+        exists = connection.execute(
+            "SELECT 1 FROM orders WHERE order_id = ?",
+            (order_id,)
         ).fetchone()
 
-        if order is None:
-            raise ValueError(
-                "No eligible customer order found."
-            )
+        if exists is None:
+            raise ValueError("Refund test order does not exist.")
 
         refund_id = connection.execute(
             "SELECT COALESCE(MAX(refund_id), 0) + 1 "
@@ -225,7 +218,7 @@ def add_refund(db_path):
                 (refund_id, order_id, reason_id, amount)
                 VALUES (?, ?, ?, ?)
                 """,
-                (refund_id, order[0], reason_id, 100)
+                (refund_id, order_id, reason_id, 100)
             )
         else:
             connection.execute(
@@ -234,7 +227,7 @@ def add_refund(db_path):
                 (refund_id, order_id, amount)
                 VALUES (?, ?, ?)
                 """,
-                (refund_id, order[0], 100)
+                (refund_id, order_id, 100)
             )
 
         connection.commit()
@@ -560,13 +553,24 @@ def evaluate_rules(sql, condition_name, db_path=None):
         directory, test_db = create_test_copy(selected_db)
 
         try:
-            add_refund(test_db)
+            # Use a fresh eligible order with exactly one payment and no
+            # refunds. Compare before/after on the same database copy so
+            # existing payment/refund multiplicity cannot confound the delta.
+            refund_order_id = add_customer_order(
+                test_db,
+                verified=1,
+                deleted=0
+            )
+            before_refund = run_query(test_db, sql)
 
-            actual = run_query(test_db, sql)
+            add_refund(test_db, refund_order_id)
+
+            after_refund = run_query(test_db, sql)
 
             results["refund_rule"] = math.isclose(
-                actual - baseline,
+                after_refund - before_refund,
                 -100,
+                rel_tol=1e-9,
                 abs_tol=1e-6
             )
 
