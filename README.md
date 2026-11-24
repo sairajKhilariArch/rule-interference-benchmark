@@ -189,7 +189,7 @@ Run the complete experiment:
 python src/experiment_runner.py
 ```
 
-The full experiment plans 360 SQL generations.
+The corrected full experiment plans 300 SQL generations.
 
 ### Resume an interrupted experiment
 
