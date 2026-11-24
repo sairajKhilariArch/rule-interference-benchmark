@@ -10,13 +10,18 @@ import hashlib
 from pathlib import Path
 from datetime import datetime
 
-ROOT = Path(__file__).parent.parent
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# Backward-compatible default database.
 DB_PATH = ROOT / "database" / "research.db"
+
 SQL_PATH = (
     Path(sys.argv[1]).resolve()
     if len(sys.argv) > 1
     else ROOT / "results" / "latest_query.sql"
 )
+
 LOG_PATH = ROOT / "results" / "rule_test_log.jsonl"
 
 
@@ -24,7 +29,18 @@ class ResultContractError(Exception):
     pass
 
 
+def resolve_db_path(db_path=None):
+    """Resolve the selected database path."""
+
+    path = Path(db_path) if db_path is not None else DB_PATH
+    return path.expanduser().resolve()
+
+
 def run_query(db_path, sql):
+    """Execute SQL against a database in read-only mode."""
+
+    db_path = resolve_db_path(db_path)
+
     connection = sqlite3.connect(
         db_path.as_uri() + "?mode=ro",
         uri=True
@@ -32,19 +48,31 @@ def run_query(db_path, sql):
 
     try:
         connection.execute("PRAGMA query_only = ON")
+
         cursor = connection.execute(sql)
         rows = cursor.fetchall()
 
+        if len(cursor.description or []) != 1:
+            raise ResultContractError(
+                "Expected exactly one result column."
+            )
+
         if len(rows) != 1 or len(rows[0]) != 1:
-            raise ResultContractError("Expected one row and one column.")
+            raise ResultContractError(
+                "Expected one row and one column."
+            )
 
         value = rows[0][0]
 
         if not isinstance(value, (int, float)):
-            raise ResultContractError("Expected a numeric result.")
+            raise ResultContractError(
+                "Expected a numeric result."
+            )
 
         if not math.isfinite(value):
-            raise ResultContractError("Result must be finite.")
+            raise ResultContractError(
+                "Result must be finite."
+            )
 
         return float(value)
 
@@ -52,43 +80,101 @@ def run_query(db_path, sql):
         connection.close()
 
 
-def create_test_copy():
+def create_test_copy(db_path=None):
+    """Create an isolated copy for mutation testing."""
+
+    source = resolve_db_path(db_path)
+
     directory = tempfile.TemporaryDirectory()
     test_db = Path(directory.name) / "test.db"
-    shutil.copy2(DB_PATH, test_db)
+
+    try:
+        shutil.copy2(source, test_db)
+    except Exception:
+        directory.cleanup()
+        raise
+
     return directory, test_db
 
 
+def get_columns(connection, table_name):
+    """Return column names for a SQLite table."""
+
+    rows = connection.execute(
+        f"PRAGMA table_info({table_name})"
+    ).fetchall()
+
+    return {row[1] for row in rows}
+
+
 def add_customer_order(db_path, verified, deleted):
+    """Add a customer, order and payment for mutation testing."""
+
     connection = sqlite3.connect(db_path)
 
     try:
+        connection.execute("PRAGMA foreign_keys = ON")
+
         customer_id = connection.execute(
-            "SELECT COALESCE(MAX(customer_id), 0) + 1 FROM customers"
+            "SELECT COALESCE(MAX(customer_id), 0) + 1 "
+            "FROM customers"
         ).fetchone()[0]
 
         order_id = connection.execute(
-            "SELECT COALESCE(MAX(order_id), 0) + 1 FROM orders"
+            "SELECT COALESCE(MAX(order_id), 0) + 1 "
+            "FROM orders"
         ).fetchone()[0]
 
         payment_id = connection.execute(
-            "SELECT COALESCE(MAX(payment_id), 0) + 1 FROM payments"
+            "SELECT COALESCE(MAX(payment_id), 0) + 1 "
+            "FROM payments"
         ).fetchone()[0]
 
         connection.execute(
-            "INSERT INTO customers VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO customers
+            (customer_id, name, is_verified, is_deleted)
+            VALUES (?, ?, ?, ?)
+            """,
             (customer_id, "Test Customer", verified, deleted)
         )
 
         connection.execute(
-            "INSERT INTO orders VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO orders
+            (order_id, customer_id, order_date, status)
+            VALUES (?, ?, ?, ?)
+            """,
             (order_id, customer_id, "2026-02-01", "completed")
         )
 
-        connection.execute(
-            "INSERT INTO payments VALUES (?, ?, ?)",
-            (payment_id, order_id, 1000)
-        )
+        payment_columns = get_columns(connection, "payments")
+
+        if "payment_method_id" in payment_columns:
+            method_id = connection.execute(
+                """
+                SELECT MIN(payment_method_id)
+                FROM payment_methods
+                """
+            ).fetchone()[0]
+
+            connection.execute(
+                """
+                INSERT INTO payments
+                (payment_id, order_id, payment_method_id, amount)
+                VALUES (?, ?, ?, ?)
+                """,
+                (payment_id, order_id, method_id, 1000)
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO payments
+                (payment_id, order_id, amount)
+                VALUES (?, ?, ?)
+                """,
+                (payment_id, order_id, 1000)
+            )
 
         connection.commit()
 
@@ -97,29 +183,59 @@ def add_customer_order(db_path, verified, deleted):
 
 
 def add_refund(db_path):
+    """Add a refund to an eligible customer order."""
+
     connection = sqlite3.connect(db_path)
 
     try:
-        order = connection.execute("""
+        connection.execute("PRAGMA foreign_keys = ON")
+
+        order = connection.execute(
+            """
             SELECT o.order_id
             FROM orders o
-            JOIN customers c ON c.customer_id = o.customer_id
+            JOIN customers c
+                ON c.customer_id = o.customer_id
             WHERE c.is_verified = 1
               AND c.is_deleted = 0
             LIMIT 1
-        """).fetchone()
+            """
+        ).fetchone()
 
         if order is None:
-            raise ValueError("No eligible customer order found.")
+            raise ValueError(
+                "No eligible customer order found."
+            )
 
         refund_id = connection.execute(
-            "SELECT COALESCE(MAX(refund_id), 0) + 1 FROM refunds"
+            "SELECT COALESCE(MAX(refund_id), 0) + 1 "
+            "FROM refunds"
         ).fetchone()[0]
 
-        connection.execute(
-            "INSERT INTO refunds VALUES (?, ?, ?)",
-            (refund_id, order[0], 100)
-        )
+        refund_columns = get_columns(connection, "refunds")
+
+        if "reason_id" in refund_columns:
+            reason_id = connection.execute(
+                "SELECT MIN(reason_id) FROM refund_reasons"
+            ).fetchone()[0]
+
+            connection.execute(
+                """
+                INSERT INTO refunds
+                (refund_id, order_id, reason_id, amount)
+                VALUES (?, ?, ?, ?)
+                """,
+                (refund_id, order[0], reason_id, 100)
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO refunds
+                (refund_id, order_id, amount)
+                VALUES (?, ?, ?)
+                """,
+                (refund_id, order[0], 100)
+            )
 
         connection.commit()
 
@@ -128,50 +244,118 @@ def add_refund(db_path):
 
 
 def add_multiple_payments_and_refunds(db_path):
+    """Add two payments and two refunds to one new order."""
+
     connection = sqlite3.connect(db_path)
 
     try:
+        connection.execute("PRAGMA foreign_keys = ON")
+
         customer_id = connection.execute(
-            "SELECT COALESCE(MAX(customer_id), 0) + 1 FROM customers"
+            "SELECT COALESCE(MAX(customer_id), 0) + 1 "
+            "FROM customers"
         ).fetchone()[0]
 
         order_id = connection.execute(
-            "SELECT COALESCE(MAX(order_id), 0) + 1 FROM orders"
+            "SELECT COALESCE(MAX(order_id), 0) + 1 "
+            "FROM orders"
         ).fetchone()[0]
 
         payment_id = connection.execute(
-            "SELECT COALESCE(MAX(payment_id), 0) + 1 FROM payments"
+            "SELECT COALESCE(MAX(payment_id), 0) + 1 "
+            "FROM payments"
         ).fetchone()[0]
 
         refund_id = connection.execute(
-            "SELECT COALESCE(MAX(refund_id), 0) + 1 FROM refunds"
+            "SELECT COALESCE(MAX(refund_id), 0) + 1 "
+            "FROM refunds"
         ).fetchone()[0]
 
         connection.execute(
-            "INSERT INTO customers VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO customers
+            (customer_id, name, is_verified, is_deleted)
+            VALUES (?, ?, ?, ?)
+            """,
             (customer_id, "Join Test Customer", 1, 0)
         )
 
         connection.execute(
-            "INSERT INTO orders VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO orders
+            (order_id, customer_id, order_date, status)
+            VALUES (?, ?, ?, ?)
+            """,
             (order_id, customer_id, "2026-02-01", "completed")
         )
 
-        connection.executemany(
-            "INSERT INTO payments VALUES (?, ?, ?)",
-            [
-                (payment_id, order_id, 600),
-                (payment_id + 1, order_id, 400)
-            ]
-        )
+        payment_columns = get_columns(connection, "payments")
 
-        connection.executemany(
-            "INSERT INTO refunds VALUES (?, ?, ?)",
-            [
-                (refund_id, order_id, 100),
-                (refund_id + 1, order_id, 50)
-            ]
-        )
+        if "payment_method_id" in payment_columns:
+            method_id = connection.execute(
+                """
+                SELECT MIN(payment_method_id)
+                FROM payment_methods
+                """
+            ).fetchone()[0]
+
+            connection.executemany(
+                """
+                INSERT INTO payments
+                (payment_id, order_id, payment_method_id, amount)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (payment_id, order_id, method_id, 600),
+                    (payment_id + 1, order_id, method_id, 400)
+                ]
+            )
+        else:
+            connection.executemany(
+                """
+                INSERT INTO payments
+                (payment_id, order_id, amount)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (payment_id, order_id, 600),
+                    (payment_id + 1, order_id, 400)
+                ]
+            )
+
+        refund_columns = get_columns(connection, "refunds")
+
+        if "reason_id" in refund_columns:
+            reason_id = connection.execute(
+                """
+                SELECT MIN(reason_id)
+                FROM refund_reasons
+                """
+            ).fetchone()[0]
+
+            connection.executemany(
+                """
+                INSERT INTO refunds
+                (refund_id, order_id, reason_id, amount)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (refund_id, order_id, reason_id, 100),
+                    (refund_id + 1, order_id, reason_id, 50)
+                ]
+            )
+        else:
+            connection.executemany(
+                """
+                INSERT INTO refunds
+                (refund_id, order_id, amount)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (refund_id, order_id, 100),
+                    (refund_id + 1, order_id, 50)
+                ]
+            )
 
         connection.commit()
 
@@ -182,9 +366,6 @@ def add_multiple_payments_and_refunds(db_path):
 def calculate_reference_total(db_path, condition_name):
     """
     Calculate expected revenue independently using Python.
-
-    The reference calculation uses only the rules assigned
-    to the selected experimental condition.
     """
 
     valid_conditions = {
@@ -221,7 +402,8 @@ def calculate_reference_total(db_path, condition_name):
     connection = sqlite3.connect(db_path)
 
     try:
-        orders = connection.execute("""
+        orders = connection.execute(
+            """
             SELECT
                 o.order_id,
                 c.is_verified,
@@ -229,20 +411,23 @@ def calculate_reference_total(db_path, condition_name):
             FROM orders o
             JOIN customers c
                 ON c.customer_id = o.customer_id
-        """).fetchall()
+            """
+        ).fetchall()
 
         payments = {}
-        for order_id, amount in connection.execute("""
-            SELECT order_id, amount FROM payments
-        """):
+
+        for order_id, amount in connection.execute(
+            "SELECT order_id, amount FROM payments"
+        ):
             payments[order_id] = (
                 payments.get(order_id, 0) + amount
             )
 
         refunds = {}
-        for order_id, amount in connection.execute("""
-            SELECT order_id, amount FROM refunds
-        """):
+
+        for order_id, amount in connection.execute(
+            "SELECT order_id, amount FROM refunds"
+        ):
             refunds[order_id] = (
                 refunds.get(order_id, 0) + amount
             )
@@ -250,6 +435,7 @@ def calculate_reference_total(db_path, condition_name):
         total = 0.0
 
         for order_id, is_verified, is_deleted in orders:
+
             if exclude_deleted and is_deleted != 0:
                 continue
 
@@ -267,16 +453,15 @@ def calculate_reference_total(db_path, condition_name):
         connection.close()
 
 
-def evaluate_baseline(sql, condition_name):
-    """
-    Compare generated SQL's original answer against
-    the independent Python reference calculation.
-    """
+def evaluate_baseline(sql, condition_name, db_path=None):
+    """Compare generated SQL with the independent reference."""
 
-    actual = run_query(DB_PATH, sql)
+    selected_db = resolve_db_path(db_path)
+
+    actual = run_query(selected_db, sql)
 
     expected = calculate_reference_total(
-        DB_PATH,
+        selected_db,
         condition_name
     )
 
@@ -292,7 +477,10 @@ def evaluate_baseline(sql, condition_name):
     }
 
 
-def evaluate_rules(sql, condition_name):
+def evaluate_rules(sql, condition_name, db_path=None):
+    """Run isolated mutation tests for the selected condition."""
+
+    selected_db = resolve_db_path(db_path)
 
     condition_tests = {
         "A_single_deleted_rule": [
@@ -325,50 +513,83 @@ def evaluate_rules(sql, condition_name):
         raise ValueError("Unknown experimental condition.")
 
     selected_tests = condition_tests[condition_name]
-    baseline = run_query(DB_PATH, sql)
+
+    baseline = run_query(selected_db, sql)
     results = {}
 
     if "deleted_customer_rule" in selected_tests:
-        directory, test_db = create_test_copy()
+        directory, test_db = create_test_copy(selected_db)
+
         try:
-            add_customer_order(test_db, verified=1, deleted=1)
-            actual = run_query(test_db, sql)
-            results["deleted_customer_rule"] = math.isclose(
-                actual, baseline, abs_tol=1e-6
+            add_customer_order(
+                test_db,
+                verified=1,
+                deleted=1
             )
+
+            actual = run_query(test_db, sql)
+
+            results["deleted_customer_rule"] = math.isclose(
+                actual,
+                baseline,
+                abs_tol=1e-6
+            )
+
         finally:
             directory.cleanup()
 
     if "verified_customer_rule" in selected_tests:
-        directory, test_db = create_test_copy()
+        directory, test_db = create_test_copy(selected_db)
+
         try:
-            add_customer_order(test_db, verified=0, deleted=0)
-            actual = run_query(test_db, sql)
-            results["verified_customer_rule"] = math.isclose(
-                actual, baseline, abs_tol=1e-6
+            add_customer_order(
+                test_db,
+                verified=0,
+                deleted=0
             )
+
+            actual = run_query(test_db, sql)
+
+            results["verified_customer_rule"] = math.isclose(
+                actual,
+                baseline,
+                abs_tol=1e-6
+            )
+
         finally:
             directory.cleanup()
 
     if "refund_rule" in selected_tests:
-        directory, test_db = create_test_copy()
+        directory, test_db = create_test_copy(selected_db)
+
         try:
             add_refund(test_db)
+
             actual = run_query(test_db, sql)
+
             results["refund_rule"] = math.isclose(
-                actual - baseline, -100, abs_tol=1e-6
+                actual - baseline,
+                -100,
+                abs_tol=1e-6
             )
+
         finally:
             directory.cleanup()
 
     if "join_multiplication_rule" in selected_tests:
-        directory, test_db = create_test_copy()
+        directory, test_db = create_test_copy(selected_db)
+
         try:
             add_multiple_payments_and_refunds(test_db)
+
             actual = run_query(test_db, sql)
+
             results["join_multiplication_rule"] = math.isclose(
-                actual - baseline, 850, abs_tol=1e-6
+                actual - baseline,
+                850,
+                abs_tol=1e-6
             )
+
         finally:
             directory.cleanup()
 
@@ -376,56 +597,99 @@ def evaluate_rules(sql, condition_name):
 
 
 def main():
+
+    sql_path = (
+        Path(sys.argv[1]).resolve()
+        if len(sys.argv) > 1
+        else SQL_PATH
+    )
+
+    condition_name = (
+        sys.argv[2] if len(sys.argv) > 2
+        else "B_combined_rules"
+    )
+
+    run_id = (
+        sys.argv[3] if len(sys.argv) > 3
+        else None
+    )
+
+    trial_number = (
+        int(sys.argv[4]) if len(sys.argv) > 4
+        else None
+    )
+
+    selected_db = (
+        resolve_db_path(sys.argv[5])
+        if len(sys.argv) > 5
+        else DB_PATH.resolve()
+    )
+
+    schema_profile = (
+        sys.argv[6] if len(sys.argv) > 6
+        else "baseline"
+    )
+
+    dataset_size = (
+        int(sys.argv[7]) if len(sys.argv) > 7
+        else None
+    )
+
     record = {
         "timestamp": datetime.now().isoformat(),
         "status": "pending",
         "tests": {},
         "baseline": None,
         "error": None,
-        "sql_file": str(SQL_PATH)
+        "sql_file": str(sql_path),
+        "database": str(selected_db),
+        "schema_profile": schema_profile,
+        "dataset_size": dataset_size,
+        "condition": condition_name,
+        "run_id": run_id,
+        "trial_number": trial_number
     }
 
     try:
-        if not DB_PATH.exists():
-            raise FileNotFoundError("Database not found.")
 
-        if not SQL_PATH.exists():
-            raise FileNotFoundError("Generated SQL not found.")
+        if not selected_db.exists():
+            raise FileNotFoundError(
+                "Selected database not found."
+            )
 
-        sql = SQL_PATH.read_text(encoding="utf-8").strip()
+        if not sql_path.exists():
+            raise FileNotFoundError(
+                "Generated SQL not found."
+            )
+
+        if schema_profile not in {"baseline", "expanded"}:
+            raise ValueError("Unknown schema profile.")
+
+        sql = sql_path.read_text(
+            encoding="utf-8"
+        ).strip()
 
         if not sql.upper().startswith(("SELECT", "WITH")):
-            raise ValueError("Only SELECT queries are supported.")
+            raise ValueError(
+                "Only SELECT queries are supported."
+            )
 
         record["query_sha256"] = hashlib.sha256(
             sql.encode("utf-8")
         ).hexdigest()
 
-        condition_name = (
-            sys.argv[2] if len(sys.argv) > 2
-            else "B_combined_rules"
-        )
-
-        record["condition"] = condition_name
-
-        record["run_id"] = (
-            sys.argv[3] if len(sys.argv) > 3 else None
-        )
-
-        record["trial_number"] = (
-            int(sys.argv[4]) if len(sys.argv) > 4 else None
-        )
-
-        # Independent baseline correctness check
+        # Independent baseline correctness check.
         record["baseline"] = evaluate_baseline(
             sql,
-            condition_name
+            condition_name,
+            selected_db
         )
 
-        # Individual business-rule checks
+        # Individual business-rule mutation tests.
         record["tests"] = evaluate_rules(
             sql,
-            condition_name
+            condition_name,
+            selected_db
         )
 
         record["status"] = "completed"
@@ -442,7 +706,10 @@ def main():
         record["status"] = "evaluation_failure"
         record["error"] = str(error)
 
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOG_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     with LOG_PATH.open("a", encoding="utf-8") as file:
         file.write(json.dumps(record) + "\n")
@@ -451,13 +718,16 @@ def main():
     print("Status:", record["status"])
 
     if record["status"] == "completed":
-        print("Baseline correct:", record["baseline"]["correct"])
+        print(
+            "Baseline correct:",
+            record["baseline"]["correct"]
+        )
         print("Rule tests:", len(record["tests"]))
         print("Evaluation saved locally.")
+
     else:
         print("Evaluation error recorded locally.")
         raise SystemExit(1)
-
 
 
 if __name__ == "__main__":

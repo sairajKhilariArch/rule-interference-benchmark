@@ -459,3 +459,165 @@ def test_metamorphic_checks_can_miss_constant_offset(synthetic_database):
     expected = independent_reference_total(synthetic_database)
 
     assert actual != expected
+import json
+import sys
+import sqlite3
+import pytest
+
+from src import rule_checker
+
+@pytest.fixture
+def expanded_database(tmp_path):
+    """Create an isolated expanded-schema database."""
+
+    from database.setup_db import create_schema
+
+    db_path = tmp_path / "expanded_research.db"
+
+    with sqlite3.connect(db_path) as connection:
+        create_schema(connection, "expanded")
+
+        connection.executemany(
+            "INSERT INTO customers VALUES (?, ?, ?, ?)",
+            [
+                (1, "Eligible Customer", 1, 0),
+                (2, "Unverified Customer", 0, 0),
+                (3, "Deleted Customer", 1, 1)
+            ]
+        )
+
+        connection.executemany(
+            "INSERT INTO orders VALUES (?, ?, ?, ?)",
+            [
+                (101, 1, "2026-01-01", "completed"),
+                (102, 2, "2026-01-02", "completed"),
+                (103, 3, "2026-01-03", "completed")
+            ]
+        )
+
+        connection.executemany(
+            "INSERT INTO categories VALUES (?, ?)",
+            [(1, "Electronics")]
+        )
+
+        connection.executemany(
+            "INSERT INTO products VALUES (?, ?, ?, ?)",
+            [(1, "Laptop", 1, 50000.0)]
+        )
+
+        connection.executemany(
+            "INSERT INTO order_items VALUES (?, ?, ?, ?)",
+            [
+                (1, 101, 1, 1),
+                (2, 102, 1, 1),
+                (3, 103, 1, 1)
+            ]
+        )
+
+        connection.executemany(
+            "INSERT INTO payment_methods VALUES (?, ?)",
+            [(1, "UPI")]
+        )
+
+        connection.executemany(
+            "INSERT INTO payments VALUES (?, ?, ?, ?)",
+            [
+                (1, 101, 1, 100),
+                (2, 102, 1, 200),
+                (3, 103, 1, 300)
+            ]
+        )
+
+        connection.executemany(
+            "INSERT INTO refund_reasons VALUES (?, ?)",
+            [(1, "Customer Return")]
+        )
+
+        connection.executemany(
+            "INSERT INTO refunds VALUES (?, ?, ?, ?)",
+            [(1, 101, 1, 10)]
+        )
+
+    return db_path
+
+
+def test_expanded_schema_reference_calculation(expanded_database):
+    result = rule_checker.calculate_reference_total(
+        expanded_database,
+        "B_combined_rules"
+    )
+
+    assert result == 90.0
+
+
+def test_expanded_schema_correct_query_passes_all_rules(
+    expanded_database
+):
+    expected = rule_checker.evaluate_baseline(
+        CORRECT_SQL,
+        "B_combined_rules",
+        expanded_database
+    )
+
+    results = rule_checker.evaluate_rules(
+        CORRECT_SQL,
+        "B_combined_rules",
+        expanded_database
+    )
+
+    assert expected["correct"] is True
+    assert set(results) == {
+        "deleted_customer_rule",
+        "verified_customer_rule",
+        "refund_rule",
+        "join_multiplication_rule"
+    }
+    assert all(value is True for value in results.values())
+
+
+def test_expanded_schema_detects_deleted_customer_violation(
+    expanded_database
+):
+    results = rule_checker.evaluate_rules(
+        BAD_DELETED_SQL,
+        "A_single_deleted_rule",
+        expanded_database
+    )
+
+    assert results["deleted_customer_rule"] is False
+
+
+def test_expanded_schema_detects_verified_customer_violation(
+    expanded_database
+):
+    results = rule_checker.evaluate_rules(
+        BAD_VERIFIED_SQL,
+        "A_single_verified_rule",
+        expanded_database
+    )
+
+    assert results["verified_customer_rule"] is False
+
+
+def test_expanded_schema_detects_refund_violation(
+    expanded_database
+):
+    results = rule_checker.evaluate_rules(
+        BAD_REFUND_SQL,
+        "A_single_refund_rule",
+        expanded_database
+    )
+
+    assert results["refund_rule"] is False
+
+
+def test_expanded_schema_detects_join_multiplication(
+    expanded_database
+):
+    results = rule_checker.evaluate_rules(
+        BAD_JOIN_SQL,
+        "A_single_join_rule",
+        expanded_database
+    )
+
+    assert results["join_multiplication_rule"] is False
