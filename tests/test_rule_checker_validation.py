@@ -138,7 +138,7 @@ def synthetic_database(tmp_path, monkeypatch):
     return db_path
 
 
-def test_correct_query_passes_all_four_rules(synthetic_database):
+def test_correct_query_passes_combined_constraints_and_net_revenue(synthetic_database):
     results = rule_checker.evaluate_rules(
         CORRECT_SQL,
         "B_combined_rules"
@@ -154,7 +154,7 @@ def test_correct_query_passes_all_four_rules(synthetic_database):
     assert all(value is True for value in results.values())
 
 
-def test_correct_query_passes_reordered_condition(synthetic_database):
+def test_correct_query_passes_reordered_constraints_and_net_revenue(synthetic_database):
     results = rule_checker.evaluate_rules(
         CORRECT_SQL,
         "C_reordered_rules"
