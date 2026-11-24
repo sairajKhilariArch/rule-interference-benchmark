@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from src import experiment_runner as runner
 from src import rule_checker
+from src import reevaluate_run
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -298,3 +299,19 @@ def test_refund_mutation_is_independent_of_existing_join_fanout(tmp_path):
     # still fails the separate multi-payment/multi-refund fan-out test.
     assert results["refund_rule"] is True
     assert results["join_multiplication_rule"] is False
+
+
+
+def test_reevaluation_rejects_sql_paths_outside_run_directory(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    allowed = reevaluate_run.safe_child(run_dir, "saved.sql")
+    assert allowed == (run_dir / "saved.sql").resolve()
+
+    try:
+        reevaluate_run.safe_child(run_dir, "../outside.sql")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Path traversal should be rejected.")
