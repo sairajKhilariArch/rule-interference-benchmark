@@ -76,3 +76,4 @@ __pycache__/
 # Local backups
 *.backup
 *.bak
+test_hermes.py
