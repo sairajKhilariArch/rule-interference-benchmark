@@ -130,3 +130,129 @@ def test_generation_prompt_declares_common_net_revenue_without_forcing_join_rule
     assert "Do not assume customer eligibility filters" in prompt
     assert "Aggregate payments and refunds separately per order" not in prompt
     assert captured["messages"][0]["content"] == prompt
+
+
+
+def correct_sql_for_condition(condition_name):
+    """Build a known-correct query for evaluator integration tests."""
+
+    filters = {
+        "A_single_deleted_rule": "WHERE c.is_deleted = 0",
+        "A_single_verified_rule": "WHERE c.is_verified = 1",
+        "A_single_join_rule": "",
+        "B_combined_rules": (
+            "WHERE c.is_deleted = 0 AND c.is_verified = 1"
+        ),
+        "C_reordered_rules": (
+            "WHERE c.is_verified = 1 AND c.is_deleted = 0"
+        ),
+    }
+
+    return f"""
+        WITH eligible_orders AS (
+            SELECT o.order_id
+            FROM orders AS o
+            JOIN customers AS c
+              ON c.customer_id = o.customer_id
+            {filters[condition_name]}
+        )
+        SELECT
+            COALESCE((
+                SELECT SUM(p.amount)
+                FROM payments AS p
+                JOIN eligible_orders AS e
+                  ON e.order_id = p.order_id
+            ), 0)
+            -
+            COALESCE((
+                SELECT SUM(r.amount)
+                FROM refunds AS r
+                JOIN eligible_orders AS e
+                  ON e.order_id = r.order_id
+            ), 0)
+    """
+
+
+def test_production_evaluator_accepts_known_correct_sql_for_all_conditions(
+    tmp_path,
+):
+    db_path = tmp_path / "evaluator_integration.db"
+    make_database(db_path)
+
+    conditions = [
+        "A_single_deleted_rule",
+        "A_single_verified_rule",
+        "A_single_join_rule",
+        "B_combined_rules",
+        "C_reordered_rules",
+    ]
+
+    for condition in conditions:
+        sql = correct_sql_for_condition(condition)
+
+        baseline = rule_checker.evaluate_baseline(
+            sql,
+            condition,
+            db_path,
+        )
+        assert baseline["correct"] is True, condition
+
+        mutation_results = rule_checker.evaluate_rules(
+            sql,
+            condition,
+            db_path,
+        )
+        assert mutation_results, condition
+        assert all(value is True for value in mutation_results.values()), (
+            condition,
+            mutation_results,
+        )
+
+
+def test_refund_mutation_does_not_change_original_database(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "refund_isolation.db"
+    make_database(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        before = {
+            "customers": connection.execute(
+                "SELECT COUNT(*) FROM customers"
+            ).fetchone()[0],
+            "orders": connection.execute(
+                "SELECT COUNT(*) FROM orders"
+            ).fetchone()[0],
+            "payments": connection.execute(
+                "SELECT COUNT(*) FROM payments"
+            ).fetchone()[0],
+            "refunds": connection.execute(
+                "SELECT COUNT(*) FROM refunds"
+            ).fetchone()[0],
+        }
+
+    sql = correct_sql_for_condition("A_single_join_rule")
+    results = rule_checker.evaluate_rules(
+        sql,
+        "A_single_join_rule",
+        db_path,
+    )
+    assert results["refund_rule"] is True
+
+    with sqlite3.connect(db_path) as connection:
+        after = {
+            "customers": connection.execute(
+                "SELECT COUNT(*) FROM customers"
+            ).fetchone()[0],
+            "orders": connection.execute(
+                "SELECT COUNT(*) FROM orders"
+            ).fetchone()[0],
+            "payments": connection.execute(
+                "SELECT COUNT(*) FROM payments"
+            ).fetchone()[0],
+            "refunds": connection.execute(
+                "SELECT COUNT(*) FROM refunds"
+            ).fetchone()[0],
+        }
+
+    assert after == before
